@@ -16,7 +16,7 @@ def calc_speed(time: float, length_meters: int = 20):
     float: Speed in kilometers per hour.
     """
     if time <= 0:
-        raise ValueError("Time must be greater than zero.")
+        return 0
 
     # Convert meters per second to kilometers per hour
     speed_kmh = (length_meters / time) * (3600 / 1000)
