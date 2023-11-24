@@ -26,11 +26,12 @@ Usage - formats:
                                     yolov8n_paddle_model       # PaddlePaddle
     """
 import platform
+import torch
 from collections import defaultdict
 from pathlib import Path
-
+import numpy as np
 import cv2
-
+import onnxruntime as ort
 from ultralytics.nn.autobackend import AutoBackend
 from ultralytics.yolo.configs import get_config
 from ultralytics.yolo.data.dataloaders.stream_loaders import LoadImages, LoadScreenshots, LoadStreams
@@ -39,7 +40,6 @@ from ultralytics.yolo.utils import DEFAULT_CONFIG, LOGGER, SETTINGS, callbacks, 
 from ultralytics.yolo.utils.checks import check_file, check_imgsz, check_imshow
 from ultralytics.yolo.utils.files import increment_path
 from ultralytics.yolo.utils.torch_utils import select_device, smart_inference_mode
-
 
 class BasePredictor:
     """
@@ -69,6 +69,8 @@ class BasePredictor:
             config (str, optional): Path to a configuration file. Defaults to DEFAULT_CONFIG.
             overrides (dict, optional): Configuration overrides. Defaults to None.
         """
+
+        self.session_inference = ort.InferenceSession('/Users/test/projects/CP_2023_car_tracking/YOLOv8-DeepSORT-Object-Tracking/yolov8l.onnx')
         if overrides is None:
             overrides = {}
         self.args = get_config(config, overrides)
@@ -176,7 +178,8 @@ class BasePredictor:
 
             # Inference
             with self.dt[1]:
-                preds = model(im, augment=self.args.augment, visualize=visualize)
+                preds = [torch.from_numpy(self.session_inference.run(None, {"images":im.numpy()})[0])]
+                #preds = model(im, augment=self.args.augment, visualize=visualize)
 
             # postprocess
             with self.dt[2]:
