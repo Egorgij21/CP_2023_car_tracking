@@ -4,6 +4,24 @@ import cv2
 import numpy as np
 
 
+def calc_speed(time: float, length_meters: int = 20):
+    """
+    Calculate the speed in kilometers per hour.
+
+    Args:
+    time (float): Time in seconds.
+    length_meters (int): Length in meters, defaults to 20 meters.
+
+    Returns:
+    float: Speed in kilometers per hour.
+    """
+    if time <= 0:
+        raise ValueError("Time must be greater than zero.")
+
+    # Convert meters per second to kilometers per hour
+    speed_kmh = (length_meters / time) * (3600 / 1000)
+    return speed_kmh
+
 def get_area(json_path):
     with open(json_path, 'r') as f:
         data = json.load(f)
