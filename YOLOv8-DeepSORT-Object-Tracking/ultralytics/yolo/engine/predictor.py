@@ -25,13 +25,20 @@ Usage - formats:
                                     yolov8n_edgetpu.tflite     # TensorFlow Edge TPU
                                     yolov8n_paddle_model       # PaddlePaddle
     """
+import json
+import os
 import platform
-import torch
+import time
 from collections import defaultdict
 from pathlib import Path
-import numpy as np
+
 import cv2
+import matplotlib.pyplot as plt
+import numpy as np
 import onnxruntime as ort
+import torch
+from PIL import Image
+
 from ultralytics.nn.autobackend import AutoBackend
 from ultralytics.yolo.configs import get_config
 from ultralytics.yolo.data.dataloaders.stream_loaders import LoadImages, LoadScreenshots, LoadStreams
@@ -40,6 +47,7 @@ from ultralytics.yolo.utils import DEFAULT_CONFIG, LOGGER, SETTINGS, callbacks, 
 from ultralytics.yolo.utils.checks import check_file, check_imgsz, check_imshow
 from ultralytics.yolo.utils.files import increment_path
 from ultralytics.yolo.utils.torch_utils import select_device, smart_inference_mode
+
 
 class BasePredictor:
     """
@@ -69,8 +77,9 @@ class BasePredictor:
             config (str, optional): Path to a configuration file. Defaults to DEFAULT_CONFIG.
             overrides (dict, optional): Configuration overrides. Defaults to None.
         """
-
-        self.session_inference = ort.InferenceSession('/Users/test/projects/CP_2023_car_tracking/YOLOv8-DeepSORT-Object-Tracking/yolov8l.onnx')
+        providers=['CUDAExecutionProvider','CPUExecutionProvider']
+        sess_options = ort.SessionOptions()
+        self.session_inference = ort.InferenceSession('../yolov8s.onnx', sess_options=sess_options, providers=providers)
         if overrides is None:
             overrides = {}
         self.args = get_config(config, overrides)
@@ -93,7 +102,19 @@ class BasePredictor:
         self.data_path = None
         self.callbacks = defaultdict(list, {k: [v] for k, v in callbacks.default_callbacks.items()})  # add callbacks
         callbacks.add_integration_callbacks(self)
+        
+        
+        with open(self.args.json_path, 'r') as f:
+            data = json.load(f)
+        self.area = self.merge_areas(data['areas'])
+        
+        self.dataframe = {}
+        cap = cv2.VideoCapture(self.args.source)
+        self.fps = cap.get(cv2.CAP_PROP_FPS)
+        self.dataframe["FPS"] = self.fps / self.args.vid_stride
+    
 
+        
     def preprocess(self, img):
         pass
 
@@ -105,70 +126,66 @@ class BasePredictor:
 
     def postprocess(self, preds, img, orig_img):
         return preds
-
+    
+        
     def setup(self, source=None, model=None):
         # source
         source = str(source if source is not None else self.args.source)
+
         is_file = Path(source).suffix[1:] in (IMG_FORMATS + VID_FORMATS)
-        is_url = source.lower().startswith(('rtsp://', 'rtmp://', 'http://', 'https://'))
-        webcam = source.isnumeric() or source.endswith('.streams') or (is_url and not is_file)
-        screenshot = source.lower().startswith('screen')
-        if is_url and is_file:
-            source = check_file(source)  # download
+        # is_url = source.lower().startswith(('rtsp://', 'rtmp://', 'http://', 'https://'))
+        # webcam = source.isnumeric() or source.endswith('.streams') or (is_url and not is_file)
+        # screenshot = source.lower().startswith('screen')
+  # download
 
         # model
         device = select_device(self.args.device)
         model = model or self.args.model
         self.args.half &= device.type != 'cpu'  # half precision only supported on CUDA
         model = AutoBackend(model, device=device, dnn=self.args.dnn, fp16=self.args.half)
+        # print(model.names)
         stride, pt = model.stride, model.pt
-        imgsz = check_imgsz(self.args.imgsz, stride=stride)  # check image size
+        imgsz = check_imgsz(self.args.imgsz, stride=32)  # check image size
 
         # Dataloader
         bs = 1  # batch_size
-        if webcam:
-            self.args.show = check_imshow(warn=True)
-            self.dataset = LoadStreams(source,
-                                       imgsz=imgsz,
-                                       stride=stride,
-                                       auto=pt,
-                                       transforms=getattr(model.model, 'transforms', None),
-                                       vid_stride=self.args.vid_stride)
-            bs = len(self.dataset)
-        elif screenshot:
-            self.dataset = LoadScreenshots(source,
-                                           imgsz=imgsz,
-                                           stride=stride,
-                                           auto=pt,
-                                           transforms=getattr(model.model, 'transforms', None))
-        else:
-            self.dataset = LoadImages(source,
-                                      imgsz=imgsz,
-                                      stride=stride,
-                                      auto=pt,
-                                      transforms=getattr(model.model, 'transforms', None),
-                                      vid_stride=self.args.vid_stride)
+
+            # print("Dataset source", stride, pt)
+        self.dataset = LoadImages(source,
+                                  imgsz=imgsz,
+                                  stride=stride,
+                                  auto=pt,
+                                  transforms=None,
+                                  vid_stride=self.args.vid_stride)
         self.vid_path, self.vid_writer = [None] * bs, [None] * bs
         model.warmup(imgsz=(1 if pt or model.triton else bs, 3, *imgsz))  # warmup
 
-        self.model = model
-        self.webcam = webcam
-        self.screenshot = screenshot
+        self.model = None
+        self.webcam = False
+        self.screenshot = False
         self.imgsz = imgsz
         self.done_setup = True
-        self.device = device
+        self.device = "cuda"
 
-        return model
+        return None
+    
 
-    @smart_inference_mode()
+
+    # @smart_inference_mode()
     def __call__(self, source=None, model=None):
-        self.run_callbacks("on_predict_start")
+        # self.run_callbacks("on_predict_start")
+        if not self.done_setup :self.setup(source, model)
+
+        # print(model.model.transforms)
         self.seen, self.windows, self.dt = 0, [], (ops.Profile(), ops.Profile(), ops.Profile())
         self.all_outputs = []
-        for batch in self.dataset:
-            self.run_callbacks("on_predict_batch_start")
+        for l, batch in enumerate(self.dataset):
+#             if l != 0:
+#                 print(f"batch time {time.time()-staa}")
+#             staa = time.time()
+#             # self.run_callbacks("on_predict_batch_start")
             path, im, im0s, vid_cap, s = batch
-            visualize = increment_path(self.save_dir / Path(path).stem, mkdir=True) if self.args.visualize else False
+    
             with self.dt[0]:
                 im = self.preprocess(im)
                 if len(im.shape) == 3:
@@ -176,41 +193,65 @@ class BasePredictor:
 
             # Inference
             with self.dt[1]:
-                preds = [torch.from_numpy(self.session_inference.run(None, {"images":im.numpy()})[0])]
-                #preds = model(im, augment=self.args.augment, visualize=visualize)
+                # start =time.time()
+                preds_numpy = self.session_inference.run(None, {"images":im.numpy()})
+                # print(f"Onnx inference only {time.time()-start}")
+                                                         
+                preds = [torch.from_numpy(preds_numpy[0])]
+                # model(im, augment=False, visualize=False) #
+                
+                
+                
 
-            # postprocess
+                
+
+            # # postprocess
             with self.dt[2]:
                 preds = self.postprocess(preds, im, im0s)
-
+                
             for i in range(len(im)):
-                if self.webcam:
-                    path, im0s = path[i], im0s[i]
+                # if self.webcam:
+                #     path, im0s = path[i], im0s[i]
                 p = Path(path)
-                s += self.write_results(i, preds, (p, im, im0s))
-
-                if self.args.show:
-                    self.show(p)
-
-                if self.args.save:
-                    self.save_preds(vid_cap, i, str(self.save_dir / p.name))
-
-            # Print time (inference-only)
+                # start =time.time()
+                self.get_preds(i, preds, (p, im, im0s))
+                # print(f"Get preds func {time.time()-start}")
+                # assert 1==0
+            # a = self.area.copy()
+            # a = np.array(a)
+            # a[:, 0] *= im0s.shape[1]
+            # a[:, 1] *= im0s.shape[0]
+            # a = a.astype(int)
+            # im0s = cv2.polylines(im0s, [a], True, (255, 0, 0), 5)
+            # cv2.imwrite("../../../../../image.png", im0s)
+            # assert 1==0
+            # print()
+                
+            if l % 1000 == 0:
+                self.save_json()
+                print((l / 36000) * 100)
+                
             LOGGER.info(f"{s}{'' if len(preds) else '(no detections), '}{self.dt[1].dt * 1E3:.1f}ms")
 
             self.run_callbacks("on_predict_batch_end")
-
+                
+        self.save_json()
         # Print results
-        t = tuple(x.t / self.seen * 1E3 for x in self.dt)  # speeds per image
-        LOGGER.info(
-            f'Speed: %.1fms pre-process, %.1fms inference, %.1fms postprocess per image at shape {(1, 3, *self.imgsz)}'
-            % t)
-        if self.args.save_txt or self.args.save:
-            s = f"\n{len(list(self.save_dir.glob('labels/*.txt')))} labels saved to {self.save_dir / 'labels'}" if self.args.save_txt else ''
-            LOGGER.info(f"Results saved to {colorstr('bold', self.save_dir)}{s}")
+        # t = tuple(x.t / self.seen * 1E3 for x in self.dt)  # speeds per image
+        # LOGGER.info(
+        #     f'Speed: %.1fms pre-process, %.1fms inference, %.1fms postprocess per image at shape {(1, 3, *self.imgsz)}'
+        #     % t)
+        # if self.args.save_txt or self.args.save:
+        #     s = f"\n{len(list(self.save_dir.glob('labels/*.txt')))} labels saved to {self.save_dir / 'labels'}" if self.args.save_txt else ''
+        #     LOGGER.info(f"Results saved to {colorstr('bold', self.save_dir)}{s}")
 
-        self.run_callbacks("on_predict_end")
+        # self.run_callbacks("on_predict_end")
         return self.all_outputs
+    
+    def save_json(self):
+        data = self.dataframe
+        with open(self.args.json_path + "_result_.json", "w") as f:
+            json.dump(data, f)
 
     def show(self, p):
         im0 = self.annotator.result()
