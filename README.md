@@ -1,6 +1,19 @@
-# CP_2023_car_tracking
+-->
+<div align="center">
 
-## Steps to run Code
+  <img src="assets/logo.png" alt="logo" width="200" height="auto" />
+  <h1>Miss MISIS x AI Talent Hub team presents</h1>
+  
+  <p>
+    Car tracking and counting for Digital breakthrough 2023 
+  </p>
+
+
+🔥 Miss MISIS x AI Talent Hub team presents:
+
+# Car tracking and counting for Digital breakthrough 2023
+
+### Steps to run Code
 
 
 - Goto the cloned folder.
