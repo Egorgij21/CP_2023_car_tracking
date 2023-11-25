@@ -3,7 +3,7 @@ import torchvision.transforms as transforms
 import numpy as np
 import cv2
 import logging
-
+import onnxruntime as ort
 from .model import Net
 
 
@@ -11,10 +11,12 @@ class Extractor(object):
     def __init__(self, model_path, use_cuda=True):
         self.net = Net(reid=True)
         self.device = "cuda" if torch.cuda.is_available() and use_cuda else "cpu"
-        state_dict = torch.load(model_path, map_location=torch.device(self.device))[
-            'net_dict']
-        self.net.load_state_dict(state_dict)
-
+        # state_dict = torch.load(model_path, map_location=torch.device(self.device))['net_dict']
+        # self.net.load_state_dict(state_dict)
+        providers=['CUDAExecutionProvider','CPUExecutionProvider']
+        sess_options = ort.SessionOptions()
+        self.session_inference = ort.InferenceSession('deep_sort.onnx', sess_options=sess_options, providers=providers)
+        
         logger = logging.getLogger("root.tracker")
         logger.info("Loading weights from {}... Done!".format(model_path))
         self.net.to(self.device)
@@ -38,14 +40,17 @@ class Extractor(object):
 
         im_batch = torch.cat([self.norm(_resize(im, self.size)).unsqueeze(
             0) for im in im_crops], dim=0).float()
+
         return im_batch
 
     def __call__(self, im_crops):
         im_batch = self._preprocess(im_crops)
         with torch.no_grad():
-            im_batch = im_batch.to(self.device)
-            features = self.net(im_batch)
-        return features.cpu().numpy()
+            # im_batch = im_batch.to(self.device)
+            features = self.session_inference.run(None, {"input":im_batch.numpy()})[0]
+            
+            # features = self.net(im_batch)
+        return features
 
 
 if __name__ == '__main__':
